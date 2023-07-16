@@ -1,4 +1,7 @@
 
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+
 import java.io.*;
 import java.net.*;
 import java.text.SimpleDateFormat;
@@ -8,24 +11,23 @@ import java.util.*;
 //Server will create threads for all client with there sockets and send message to each user using those sockets
 public class Server {
 
-    private static int cliendId = 0;
+    private static int clientId = 0;
     private final ArrayList<ClientThread> threadList;
     private final SimpleDateFormat dateFormat;
     private final int portNumber;
     private boolean flag;
-    private final String indentation = " ";
     private final ArrayList<Channel> channels;
-//    constructor used to create channel list and initialize variables
+
+    // Constructor used to create channel list and initialize variables
     public Server(int port) {
         this.portNumber = port;
         dateFormat = new SimpleDateFormat("HH:mm:ss");
         threadList = new ArrayList<>();
         channels = new ArrayList<>();
-        for (int i = 0; i < 10; i++) {
-            channels.add(new Channel(String.valueOf(i), "Test" + i, new ArrayList<>()));            
-        }
     }
-//    method to start the server on the given port number
+
+
+    // Method to start the server on the given port number
     public void startServer() {
         flag = true;
         try {
@@ -54,97 +56,73 @@ public class Server {
         }
     }
 
-//    method used to publish messages to a given channel
-    private synchronized void publishMesssage(String msg, String channel){
-        Channel ch = null;
+    private synchronized void openRequest(ClientThread thread){
+        Channel userChannel = new Channel(thread.identity);
+        userChannel.addSubscriber(thread.identity);
+        userChannel.addSubscriberThread(thread);
+        channels.add(userChannel);
+    }
+
+    private synchronized void respondSuccess(ClientThread thread){
+        JSONObject response = new JSONObject();
+        response.put("_class", "SuccessResponse");
+        thread.sendResponse(response);
+    }
+
+    private synchronized void respondError(ClientThread thread, String error){
+        JSONObject response = new JSONObject();
+        response.put("_class", "ErrorResponse");
+        response.put("error", error);
+        thread.sendResponse(response);
+    }
+
+    private synchronized void respondMessageList(ClientThread thread, ArrayList<Message> sentMessages){
+        ArrayList<JSONObject> messages = new ArrayList<>();
+        JSONArray jsonMessages = new JSONArray();
+        for (Message message : sentMessages){
+            jsonMessages.add(message.toJSONObject());
+            messages.add(message.toJSONObject());
+        }
+        JSONObject response = new JSONObject();
+        response.put("_class", "MessageListResponse");
+        response.put("messages", jsonMessages);
+        thread.sendResponse(response);
+    }
+    private synchronized Channel getChannelByIdentity(String identity){
+        Channel channel = null;
         for (Channel c : channels) {
-            if (c.getChannelName().equalsIgnoreCase(channel)) {
-                ch = c;
+            if (c.getIdentity().equalsIgnoreCase(identity)) {
+                channel = c;
             }
         }
-        if(ch != null){
-            for (ClientThread ct : threadList) {
-                if(ch.getUsers().contains(ct.userName)){
-                    ct.sendObject(msg);
-                }
-            }
-        }
-    }
-//    method used to send public and private messages to the user
-    private synchronized boolean sendMessage(Message message, String text) {
-        String t = dateFormat.format(new Date());
-
-        String[] split = text.split(" ", 3);
-        boolean isPrivate = false;
-        if (split[1].charAt(0) == '@') {
-            isPrivate = true;
-        }
-
-        if (isPrivate == true) {
-            String userName = split[1].substring(1, split[1].length());
-
-            text = split[0] + split[2];
-            String msg = t + " " + text + "\n";
-            boolean found = false;
-            for (int i = threadList.size(); --i >= 0;) {
-                ClientThread client = threadList.get(i);
-                if (client.getUserName().equals(userName)) {
-                    if (message.getType() == MessageType.MESSAGE) {
-                        if (!client.sendObject(msg)) {
-                            threadList.remove(i);
-                        }
-                    } else if (message.getType() == MessageType.SENDFILE) {
-                        if (!client.sendFile(message.getFile(), message.getFileContent())) {
-                            threadList.remove(i);
-                        }
-                    }
-                    found = true;
-                    break;
-                }
-
-            }
-            if (found != true) {
-                return false;
-            }
-        } else {
-            String msg = t + " " + text + "\n";
-
-            if (message.getType() == MessageType.MESSAGE) {
-                for (int i = threadList.size(); --i >= 0;) {
-                    ClientThread client = threadList.get(i);
-                    if (!client.sendObject(msg)) {
-                        threadList.remove(i);
-                    }
-                }
-            } else if (message.getType() == MessageType.SENDFILE) {
-                for (int i = threadList.size(); --i >= 0;) {
-                    ClientThread client = threadList.get(i);
-                    if (!client.sendFile(message.getFile(), message.getFileContent())) {
-                        threadList.remove(i);
-                    }
-                }
-            }
-        }
-        return true;
-
-    }
-//    message used to remove client by id. So, it will remove thread from thread list
-    synchronized void removeClientById(int id) {
-
-        String disconnectedClient = "";
-        for (int i = 0; i < threadList.size(); ++i) {
-            ClientThread ct = threadList.get(i);
-            if (ct.id == id) {
-                disconnectedClient = ct.getUserName();
-                threadList.remove(i);
-                break;
-            }
-        }
-        sendMessage(new Message(MessageType.MESSAGE, "", null, null, "", ""), indentation + disconnectedClient + " has left the chat room." + indentation);
+        return channel;
     }
 
-//    thread client class to create a thread of each client on server to receive messages 
-//    and give response to others accordingly
+    private synchronized ArrayList<Channel> getSubscribedChannels(ClientThread thread){
+        ArrayList<Channel> subscribedChannels = new ArrayList<>();
+        for (Channel channel : channels) {
+            if (channel.getIdentity().equalsIgnoreCase(thread.identity)) {
+                subscribedChannels.add(channel);
+            }
+        }
+        return subscribedChannels;
+    }
+
+    private synchronized ArrayList<Message> getSentMessages(ClientThread thread, long after){
+        ArrayList<Channel> subscribedChannels = getSubscribedChannels(thread);
+        ArrayList<Message> sentMessages = new ArrayList<>();
+        for (Channel subscribedChannel : subscribedChannels) {
+            for (Message message : subscribedChannel.getMessages()) {
+                if (message.getWhen() > after) {
+                    sentMessages.add(message);
+                }
+            }
+        }
+        Collections.sort(sentMessages);
+        return sentMessages;
+    }
+
+    // Thread client class to create a thread of each client on server to receive messages and give response to others accordingly
     class ClientThread extends Thread {
 
         Socket socket;
@@ -152,12 +130,12 @@ public class Server {
         ObjectOutputStream outputStream;
         int id;
         String clientIP;
-        String userName;
-        Message message;
+        String identity;
+        JSONObject request;
         String date;
-//        constructor to create client profile on server
+
         ClientThread(Socket socket) {
-            id = ++cliendId;
+            id = ++clientId;
             this.socket = socket;
             clientIP = socket.getInetAddress().getHostAddress();
             if (id != Integer.parseInt(clientIP.substring(clientIP.length() - 1, clientIP.length()))) {
@@ -169,8 +147,7 @@ public class Server {
             try {
                 outputStream = new ObjectOutputStream(socket.getOutputStream());
                 inputStream = new ObjectInputStream(socket.getInputStream());
-                userName = (String) inputStream.readObject();
-                sendMessage(new Message(MessageType.MESSAGE, "", null, null, "", ""), indentation + userName + " has joined the chat room." + indentation);
+                identity = (String) inputStream.readObject();
             } catch (IOException e) {
                 return;
             } catch (ClassNotFoundException e) {
@@ -178,121 +155,73 @@ public class Server {
             date = new Date().toString() + "\n";
         }
 
-        public String getUserName() {
-            return userName;
-        }
-
-        public void setUserName(String userName) {
-            this.userName = userName;
-        }
-
-//        thread class methoded overrided here and it will run when thread will be started
+        // Thread class method override will run when thread will be started
         @Override
         public void run() {
-            boolean flag = true;
-            while (flag) {
-//                listen for the messages from the client
+            boolean running = true;
+            while (running) {
+
+                // Listen for the messages from the client
                 try {
-                    message = (Message) inputStream.readObject();
+                    request = (JSONObject) inputStream.readObject();
                 } catch (IOException | ClassNotFoundException e) {
                     break;
                 }
-                String text = this.message.getText();
 
-                switch (this.message.getType()) {
-//                    if the client send a text message to all or to specific cleint
-                    case MESSAGE:
-                        boolean confirmation = sendMessage(this.message, userName + ": " + text);
-                        if (confirmation == false) {
-                            String msg = indentation + "No such user exists." + indentation;
-                            sendObject(msg);
+                String requestType = (String) request.get("_class");
+                this.identity = (String) request.get("identity");
+
+                if(requestType.equalsIgnoreCase("OpenRequest")){
+                    openRequest(this);
+                    respondSuccess(this);
+                } else if (requestType.equalsIgnoreCase("PublishRequest")) {
+                    Channel channel = getChannelByIdentity(identity);
+                    if(channel != null){
+                        Message message = new Message((JSONObject) request.get("message"));
+                        if(message.isValid()){
+                            // Add message to the channel
+                            channel.getMessages().add(message);
+
+                            // Send message to all subscribers of this channel
+                            channel.sendMessageToSubscribers(message);
+
+                            // Return Success
+                            respondSuccess(this);
+                        } else {
+                            // Respond with Error if length is extra
+                            respondError(this, "MESSAGE TOO BIG: " + message.getBody().length());
                         }
-                        break;
-//                        if client send text message to a channel
-                    case PUBLISH:
-                        String[] arr = text.split(" ", 3);
-                        for (Channel channel : channels) {
-                            if(channel.getChannelName().equalsIgnoreCase(arr[1])){
-                                channel.getMessages().add(new Message(MessageType.MESSAGE, arr[2],null,null,message.getFrom(), dateFormat.format(new Date())));
-                                publishMesssage(arr[2], arr[1]);
-                                break;
-                            }
-                        }
-                        break;
-//                        if cleint request to view his published messages in a channel
-                    case SHOW:
-                        String[] msgs = text.split(" ", 2);
-                        for (Channel channel : channels) {
-                            if(channel.getChannelName().equalsIgnoreCase(msgs[1])){
-                                for (Message m : channel.getMessages()) {
-                                    if(m.getFrom().equalsIgnoreCase(userName)){
-                                        sendObject(m.getText());
-                                    }
-                                }
-                            }
-                        }
-                        break;
-//                        if client send a file to all or a specific user
-                    case SENDFILE: {
-                        confirmation = sendMessage(this.message, userName + ": " + text);
-                        if (confirmation == false) {
-                            String msg = indentation + "No such user exists." + indentation;
-                            sendObject(msg);
-                        }
-                        break;
+                    } else {
+                        // Respond with error if channel is invalid
+                        respondError(this, "No Such Channel: " + identity);
                     }
-//                    if client subsribe a channel
-                    case SUBSCRIBE:
-                        String channelName = text.split(" ", 2)[1];
-                        for (Channel channel : channels) {
-                            if(channel.getChannelName().equalsIgnoreCase(channelName)){
-                                if(channel.getUsers().contains(this.getUserName())){
-                                    sendObject("You already Subscribed this channel");
-                                }else{
-                                    channel.getUsers().add(this.getUserName());
-                                    sendObject("Channel Subscribed successfully");                                    
-                                }
-                                break;
-                            }
-                        }
-                        break;
-//                        if cleint unsubscribe a channel
-                    case UNSUBSCRIBE:
-                        channelName = text.split(" ", 2)[1];
-                        for (Channel channel : channels) {
-                            if(channel.getChannelName().equalsIgnoreCase(channelName)){
-                                if(channel.getUsers().contains(this.getUserName())){
-                                    channel.getUsers().add(this.getUserName());
-                                    sendObject("Channel Unsubscribed successfully");                                    
-                                }else{
-                                    sendObject("You have not Subscription of this channel");
-                                }
-                            }
-                            break;
-                        }
-                        break;
-//                        if cleint logout from the server
-                    case LOGOUT:
-                        flag = false;
-                        break;
-//                        if client request to view all channel list
-                    case CHANNELLIST:
-                        sendObject("List of the Available Channels " + "\n");
-                        for (Channel c : channels) {
-                            sendObject(c.getChannelId() + "- Channel Name: " + c.getChannelName() + " Subscriptions " + c.getUsers().size());
-                        }
-                        break;
-//                        if client request to view all client list
-                    case ACTIVECLIENTS:
-                        sendObject("List of the users connected at " + dateFormat.format(new Date()) + "\n");
-                        for (int i = 0; i < threadList.size(); ++i) {
-                            ClientThread ct = threadList.get(i);
-                            sendObject(ct.clientIP + " Username: " + ct.userName + " since " + ct.date);
-                        }
-                        break;
+                } else if (requestType.equalsIgnoreCase("SubscribeRequest")) {
+                    String requestedChannel = (String) request.get("channel");
+                    Channel channel = getChannelByIdentity(requestedChannel);
+                    if(channel != null){
+                        channel.addSubscriberThread(this);
+                        channel.addSubscriber(this.identity);
+                        respondSuccess(this);
+                    } else {
+                        // Respond with error if channel is invalid
+                        respondError(this, "No Such Channel: " + requestedChannel);
+                    }
+                } else if (requestType.equalsIgnoreCase("UnsubscribeRequest")) {
+                    String requestedChannel = (String) request.get("channel");
+                    Channel channel = getChannelByIdentity(requestedChannel);
+                    if(channel != null){
+                        channel.unsubscribeThread(this);
+                        channel.removeSubscriber(this.identity);
+                        respondSuccess(this);
+                    } else {
+                        // Respond with error if channel is invalid
+                        respondError(this, "No Such Channel: " + requestedChannel);
+                    }
+                } else if (requestType.equalsIgnoreCase("GetRequest")) {
+                    long after = (long) request.get("after");
+                    respondMessageList(this, getSentMessages(this, after));
                 }
             }
-            removeClientById(id);
             close();
         }
 
@@ -311,29 +240,15 @@ public class Server {
             }
         }
 
-//        method to send message from server to client
-        private boolean sendObject(String msg) {
+        // Method to send message from server to client
+        public boolean sendResponse(JSONObject response) {
             if (!socket.isConnected()) {
                 close();
                 return false;
             }
             try {
-                outputStream.writeObject(new Message(MessageType.MESSAGE, msg, null, null, "", ""));
-            } catch (IOException e) {
-            }
-            return true;
-        }
-//        method to send file to the user
-        private boolean sendFile(File file, byte[] content) {
-            if (!socket.isConnected()) {
-                close();
-                return false;
-            }
-            try {
-                outputStream.writeObject(new Message(MessageType.SENDFILE, "", content, file, "", ""));
-            } // if an error occurs, do not abort just inform the user // if an error occurs, do not abort just inform the user
-            catch (IOException e) {
-            }
+                outputStream.writeObject(response);
+            } catch (IOException e) {}
             return true;
         }
     }
