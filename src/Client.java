@@ -1,8 +1,8 @@
 
+import org.json.simple.JSONObject;
+
 import java.net.*;
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.*;
 
 //Client class to run a client and connect it with the server on port 8000
@@ -14,24 +14,16 @@ public class Client {
     private Socket socket;
 
     private final String server;
-    private String userName;
+    private String identity;
     private final int portNumber;
 
-    public String getUserName() {
-        return userName;
-    }
-
-    public void setUserName(String userName) {
-        this.userName = userName;
-    }
-
-    Client(String server, int portNumber, String userName) {
+    Client(String server, int portNumber, String identity) {
         this.server = server;
         this.portNumber = portNumber;
-        this.userName = userName;
+        this.identity = identity;
     }
 
-//    method to start the client on the server with the port number
+    // Method to start the client on the server with the port number
     public boolean start() {
         try {
             socket = new Socket(server, portNumber);
@@ -50,7 +42,7 @@ public class Client {
             return false;
         }
 
-//        thread to serve client and wait for the messages or notifications
+        // Thread to serve client and wait for the messages or notifications
         new Thread(){
             @Override
             public void run(){
@@ -58,7 +50,7 @@ public class Client {
             }
         }.start();
         try {
-            outputStream.writeObject(userName);
+            outputStream.writeObject(identity);
         } catch (IOException eIO) {
             printLine("Login Exception: " + eIO);
             disconnect();
@@ -67,24 +59,12 @@ public class Client {
         return true;
     }
 
-//    serve method that's running in the thread
+    // Serve method that's running in the thread
     private void serve() {
         while (true) {
             try {
-                Message msg = (Message) inputStream.readObject();
-                switch (msg.getType()) {
-                    case MESSAGE:
-                        System.out.println(msg.getText());
-                        System.out.print("> ");
-                        break;
-                    case SENDFILE:
-                        String home = System.getProperty("user.home");
-                        System.out.println(Paths.get(home + "/Downloads/" + msg.getFile().getName()));
-                        Files.write(Paths.get(home + "/Downloads/" + msg.getFile().getName()), msg.getFileContent());
-                        System.out.println("Successfully sent.");
-                        System.out.print("> ");
-                        break;
-                }
+                JSONObject msg = (JSONObject) inputStream.readObject();
+                System.out.println(msg.toJSONString());
             } catch (IOException e) {
                 printLine(indentation + "Server has closed the connection: " + e + indentation);
                 break;
@@ -94,19 +74,10 @@ public class Client {
     }
 
     private void printLine(String msg) {
-
         System.out.println(msg);
+    }
 
-    }
-//    method used to send message using string
-    void sendMessage(Message msg) {
-        try {
-            outputStream.writeObject(msg);
-        } catch (IOException e) {
-            printLine("Exception writing to server: " + e);
-        }
-    }
-//    method to disconnect from the server
+    // Method to disconnect from the server
     private void disconnect() {
         try {
             if (inputStream != null) {
@@ -124,108 +95,149 @@ public class Client {
 
     }
 
-//    method to send public and private file to any user
-    public void sendFile(Message msg) throws IOException {
-        System.out.println("* For Public file transfer, Enter file name with path");
-        System.out.println("* For private file transfer, Type '@username<space>filepath' without quotes");
-        System.out.print("> ");
-        Scanner scan = new Scanner(System.in);
-        String st = scan.nextLine();
-        File file;
-        if (st.split(" ").length == 2) {
-            file = new File(st.split(" ")[1]);
-        } else {
-            file = new File(st);
+    // openRequest For First Time
+
+    public void openRequest(){
+        JSONObject request = new JSONObject();
+
+        request.put("_class", "OpenRequest");
+        request.put("identity", this.identity);
+        try {
+            outputStream.writeObject(request);
+        } catch (IOException e) {
+            printLine("Exception writing to server: " + e);
         }
-        byte[] buffer = Files.readAllBytes(file.toPath());
-        outputStream.writeObject(new Message(msg.getType(), st, buffer, file, "", ""));
     }
 
-//    main method to initiate the program
+    // Publish Request to send Messages
+    public void publishRequest(String body, String from, String pic){
+        JSONObject message = new JSONObject();
+        message.put("_class", "Message");
+        message.put("from", from);
+        message.put("body", body);
+        message.put("pic", pic);
+        message.put("when", System.currentTimeMillis());
+
+        JSONObject request = new JSONObject();
+        request.put("_class", "PublishRequest");
+        request.put("identity", this.identity);
+        request.put("message", message);
+
+        try {
+            outputStream.writeObject(request);
+        } catch (IOException e) {
+            printLine("Exception writing to server: " + e);
+        }
+    }
+
+    // Subscribe Request to subscribe to channel
+    public void subscribeRequest(String channel){
+        JSONObject request = new JSONObject();
+        request.put("_class", "SubscribeRequest");
+        request.put("identity", this.identity);
+        request.put("channel", channel);
+
+        try {
+            outputStream.writeObject(request);
+        } catch (IOException e) {
+            printLine("Exception writing to server: " + e);
+        }
+    }
+
+    // Unsubscribe request to unsubscribe from channel
+    public void unsubscribeRequest(String channel){
+        JSONObject request = new JSONObject();
+        request.put("_class", "UnsubscribeRequest");
+        request.put("identity", this.identity);
+        request.put("channel", channel);
+
+        try {
+            outputStream.writeObject(request);
+        } catch (IOException e) {
+            printLine("Exception writing to server: " + e);
+        }
+    }
+
+    // getRequest to get MessageList
+    public void getRequest(long after){
+        JSONObject request = new JSONObject();
+        request.put("_class", "GetRequest");
+        request.put("identity", this.identity);
+        request.put("after", after);
+
+        try {
+            outputStream.writeObject(request);
+        } catch (IOException e) {
+            printLine("Exception writing to server: " + e);
+        }
+    }
+
+    // Main method to run the client
     public static void main(String[] args) throws IOException {
         int portNumber = 8000;
         String serverAddress = "localhost";
         String userName;
         Client client;
         try (Scanner scan = new Scanner(System.in)) {
-            System.out.println("Enter the username: ");
+            System.out.println("Enter the identity: ");
             userName = scan.nextLine();
-            switch (args.length) {
-                case 3:
-                    try {
-                        userName = args[0];
-                        portNumber = Integer.parseInt(args[1]);
-                        serverAddress = args[2];
-                    } catch (NumberFormatException e) {
-                        System.out.println("Invalid port number.");
-                        System.out.println("Usage is: > java client [username] [portNumber] [serverAddress]");
-                        return;
-                    }
-                    break;
-                case 2:
-                    try {
-                        userName = args[0];
-                        portNumber = Integer.parseInt(args[1]);
-                    } catch (NumberFormatException e) {
-                        System.out.println("Invalid port number.");
-                        System.out.println("Usage is: > java client [username] [portNumber] [serverAddress]");
-                        return;
-                    }
-                    break;
-                case 1:
-                    userName = args[0];
-                    break;
-                case 0:
-                    if(userName.isEmpty())
-                        userName = "Unknown";
-                    break;
-                default:
-                    System.out.println("Usage is: > java client [username] [portNumber] [serverAddress]");
-                    return;
-            }
-//            client object to create and start client
             client = new Client(serverAddress, portNumber, userName);
             if (!client.start()) {
                 client.start();
             }
-//            menu to show the user
-            System.out.println("Messaging Application");
-            System.out.println("Follow the given Instructions:");
-            System.out.println("1. Type Message for public message");
-            System.out.println("2. Type '@username<space>yourmessage' without quotes for private message");
-            System.out.println("3. Type 'PUBLISH<space>channelname<space>yourmessage' without quotes to publish a message to a channel");
-            System.out.println("3. Type 'SHOW<space>channelname' without quotes to show all messages of a channel");
-            System.out.println("4. Type 'SUBSCRIBE<space>channelname' without quotes to subscribe a channel");
-            System.out.println("5. Type 'UNSUBSCRIBE<space>channelname' without quotes to subscribe a channel");
-            System.out.println("6. Type 'ACTIVECLIENTS' without quotes to check active peers");
-            System.out.println("7. Type 'CHANNELLIST' without quotes to send file");
-            System.out.println("8. Type 'SENDFILE' without quotes to send file");
-            System.out.println("9. Type 'LOGOUT' without quotes to logout");
-//            loop to accept input from user continously
+
+            client.openRequest();
+
+            System.out.println("********** Messaging Application **********\n");
+            System.out.println("Follow the given Instructions:\n");
+
+
+            // Loop to accept input from user continously
             while (true) {
+
+                System.out.println("1. Publish");
+                System.out.println("2. Subscribe");
+                System.out.println("3. Unsubscribe");
+                System.out.println("4. Get Messages");
+                System.out.println("5. Quit");
+                System.out.println("Enter choice 1-5");
+
                 System.out.print("> ");
-                String message = scan.nextLine();
-                if (message.equalsIgnoreCase("LOGOUT")) {
-                    client.sendMessage(new Message(MessageType.LOGOUT, "", null, null, "", ""));
+                int choice = scan.nextInt();
+                scan.nextLine();
+
+                if(choice == 1){
+                    System.out.println("Enter Sender Name:");
+                    System.out.print("> ");
+                    String from = scan.nextLine();
+                    System.out.println("Enter Message Body:");
+                    System.out.print("> ");
+                    String body = scan.nextLine();
+                    System.out.println("Enter Message Pic:");
+                    System.out.print("> ");
+                    String pic = scan.nextLine();
+                    client.publishRequest(body, from, pic);
+                } else if (choice == 2) {
+                    System.out.println("Enter Channel Name:");
+                    System.out.print("> ");
+                    String channel = scan.nextLine();
+                    client.subscribeRequest(channel);
+                } else if (choice == 3) {
+                    System.out.println("Enter Channel Name:");
+                    System.out.print("> ");
+                    String channel = scan.nextLine();
+                    client.unsubscribeRequest(channel);
+                } else if (choice == 4) {
+                    System.out.println("Enter After Timestamp:");
+                    System.out.print("> ");
+                    int after = scan.nextInt();
+                    scan.nextLine();
+                    client.getRequest(after);
+                } else if (choice == 5) {
                     break;
-                } else if (message.equalsIgnoreCase("CHANNELLIST")) {
-                    client.sendMessage(new Message(MessageType.CHANNELLIST, "", null, null, "", ""));
-                } else if (message.split(" ", 3)[0].trim().equalsIgnoreCase("PUBLISH")) {
-                    client.sendMessage(new Message(MessageType.PUBLISH, message, null, null, userName, ""));
-                } else if (message.split(" ", 2)[0].trim().equalsIgnoreCase("SHOW")) {
-                    client.sendMessage(new Message(MessageType.SUBSCRIBE, message, null, null, "", ""));
-                } else if (message.split(" ", 2)[0].trim().equalsIgnoreCase("SUBSCRIBE")) {
-                    client.sendMessage(new Message(MessageType.SUBSCRIBE, message, null, null, "", ""));
-                } else if (message.split(" ", 2)[0].trim().equalsIgnoreCase("UNSUBSCRIBE")) {
-                    client.sendMessage(new Message(MessageType.UNSUBSCRIBE, message, null, null, "", ""));
-                } else if (message.equalsIgnoreCase("ACTIVECLIENTS")) {
-                    client.sendMessage(new Message(MessageType.ACTIVECLIENTS, "", null, null, "", ""));
-                } else if (message.equalsIgnoreCase("SENDFILE")) {
-                    client.sendFile(new Message(MessageType.SENDFILE, "", null, null, "", ""));
-                } else if (!message.isEmpty()) {
-                    client.sendMessage(new Message(MessageType.MESSAGE, message, null, null, "", ""));
                 }
             }
+
         }
         client.disconnect();
     }
