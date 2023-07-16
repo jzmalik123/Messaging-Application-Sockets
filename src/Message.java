@@ -1,46 +1,57 @@
 
+import org.json.simple.JSONObject;
+
 import java.io.*;
 
 //Message class to store user messages
-public class Message implements Serializable {
+public class Message implements Comparable<Message>{
 
-    private final MessageType type;
-    private final String text;
     private final String from;
-    private final String when;
-    private final byte[] fileContent;
-    private final File file;
+    private final String body;
+    private final long when;
+    private final String pic;
 
-    Message(MessageType type, String text, byte[] fileContent, File file, String from, String when) {
-        this.type = type;
-        this.text = text;        
+    public Message(String from, String body, long when, String pic) {
         this.from = from;
-        this.when = when;
-        this.fileContent = fileContent;
-        this.file = file;
+        this.body = body;
+        this.when = System.currentTimeMillis();
+        this.pic = pic;
     }
 
-    public String getFrom() {
-        return from;
+    public Message(JSONObject message){
+        this.from = (String) message.get("from");
+        this.body = (String) message.get("body");
+        this.when = System.currentTimeMillis();
+        this.pic = (String) message.get("pic");
+    }
+    public boolean isValid() {
+        return body.length() < 1234;
     }
 
-    public String getWhen() {
+    public JSONObject toJSONObject(){
+        JSONObject message = new JSONObject();
+        message.put("from", this.from);
+        message.put("body", this.body);
+        message.put("when", this.when);
+        if(this.pic != null && !this.pic.equalsIgnoreCase("")){
+            message.put("pic", this.pic);
+        }
+        return message;
+    }
+
+    public String getBody() {
+        return body;
+    }
+
+    public long getWhen() {
         return when;
     }
 
-    MessageType getType() {
-        return type;
-    }
+    // overriding the compareTo method of Comparable class
+    @Override public int compareTo(Message compareMessage) {
+        long compareWhen = ((Message)compareMessage).getWhen();
 
-    byte[] getFileContent() {
-        return fileContent;
-    }
-
-    File getFile() {
-        return file;
-    }
-
-    String getText() {
-        return text;
+        //  For Ascending order
+        return (int) (this.when - compareWhen);
     }
 }
